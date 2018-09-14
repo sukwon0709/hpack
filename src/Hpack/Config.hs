@@ -51,6 +51,7 @@ module Hpack.Config (
 , verbatimValueToString
 , CustomSetup(..)
 , Section(..)
+, ForeignLibrary(..)
 , Library(..)
 , Executable(..)
 , Conditional(..)
@@ -69,6 +70,7 @@ module Hpack.Config (
 , pathsModuleFromPackageName
 , Cond(..)
 
+, ForeignLibrarySection(..)
 , LibrarySection(..)
 , fromLibrarySectionInConditional
 , formatOrList
@@ -146,6 +148,7 @@ package name version = Package {
   , packageDataDir = Nothing
   , packageSourceRepository = Nothing
   , packageCustomSetup = Nothing
+  , packageForeignLibrary = Nothing
   , packageLibrary = Nothing
   , packageInternalLibraries = mempty
   , packageExecutables = mempty
@@ -190,6 +193,31 @@ packageConfig = "package.yaml"
 data CustomSetupSection = CustomSetupSection {
   customSetupSectionDependencies :: Maybe Dependencies
 } deriving (Eq, Show, Generic, FromValue)
+
+data ForeignLibrarySection = ForeignLibrarySection {
+  foreignLibrarySectionExposed :: Maybe Bool
+, foreignLibrarySectionExposedModules :: Maybe (List String)
+, foreignLibrarySectionGeneratedExposedModules :: Maybe (List String)
+, foreignLibrarySectionOtherModules :: Maybe (List String)
+, foreignLibrarySectionGeneratedOtherModules :: Maybe (List String)
+, foreignLibrarySectionReexportedModules :: Maybe (List String)
+, foreignLibrarySectionSignatures :: Maybe (List String)
+} deriving (Eq, Show, Generic, FromValue)
+
+instance Monoid ForeignLibrarySection where
+  mempty = ForeignLibrarySection Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mappend = (<>)
+
+instance Semigroup ForeignLibrarySection where
+  a <> b = ForeignLibrarySection {
+    foreignLibrarySectionExposed = foreignLibrarySectionExposed b <|> foreignLibrarySectionExposed a
+  , foreignLibrarySectionExposedModules = foreignLibrarySectionExposedModules a <> foreignLibrarySectionExposedModules b
+  , foreignLibrarySectionGeneratedExposedModules = foreignLibrarySectionGeneratedExposedModules a <> foreignLibrarySectionGeneratedExposedModules b
+  , foreignLibrarySectionOtherModules = foreignLibrarySectionOtherModules a <> foreignLibrarySectionOtherModules b
+  , foreignLibrarySectionGeneratedOtherModules = foreignLibrarySectionGeneratedOtherModules a <> foreignLibrarySectionGeneratedOtherModules b
+  , foreignLibrarySectionReexportedModules = foreignLibrarySectionReexportedModules a <> foreignLibrarySectionReexportedModules b
+  , foreignLibrarySectionSignatures = foreignLibrarySectionSignatures a <> foreignLibrarySectionSignatures b
+  }
 
 data LibrarySection = LibrarySection {
   librarySectionExposed :: Maybe Bool
@@ -493,10 +521,12 @@ formatOrList xs = case reverse xs of
 type SectionConfigWithDefaluts cSources cxxSources jsSources a = Product DefaultsConfig (WithCommonOptions cSources cxxSources jsSources a)
 
 type PackageConfigWithDefaults cSources cxxSources jsSources = PackageConfig_
+  (SectionConfigWithDefaluts cSources cxxSources jsSources ForeignLibrarySection)
   (SectionConfigWithDefaluts cSources cxxSources jsSources LibrarySection)
   (SectionConfigWithDefaluts cSources cxxSources jsSources ExecutableSection)
 
 type PackageConfig cSources cxxSources jsSources = PackageConfig_
+  (WithCommonOptions cSources cxxSources jsSources ForeignLibrarySection)
   (WithCommonOptions cSources cxxSources jsSources LibrarySection)
   (WithCommonOptions cSources cxxSources jsSources ExecutableSection)
 
@@ -508,7 +538,7 @@ instance FromValue PackageVersion where
     String s -> return (T.unpack s)
     _ -> typeMismatch "Number or String" v
 
-data PackageConfig_ library executable = PackageConfig {
+data PackageConfig_ foreignLibrary library executable = PackageConfig {
   packageConfigName :: Maybe String
 , packageConfigVersion :: Maybe PackageVersion
 , packageConfigSynopsis :: Maybe String
@@ -532,6 +562,7 @@ data PackageConfig_ library executable = PackageConfig {
 , packageConfigGithub :: Maybe Text
 , packageConfigGit :: Maybe String
 , packageConfigCustomSetup :: Maybe CustomSetupSection
+, packageConfigForeignLibrary :: Maybe foreignLibrary
 , packageConfigLibrary :: Maybe library
 , packageConfigInternalLibraries :: Maybe (Map String library)
 , packageConfigExecutable :: Maybe executable
@@ -546,6 +577,7 @@ data DefaultsConfig = DefaultsConfig {
 
 traversePackageConfig :: Traversal PackageConfig
 traversePackageConfig t@Traverse{..} p@PackageConfig{..} = do
+  foreignLibrary <- traverse (traverseWithCommonOptions t) packageConfigForeignLibrary
   library <- traverse (traverseWithCommonOptions t) packageConfigLibrary
   internalLibraries <- traverseNamedConfigs t packageConfigInternalLibraries
   executable <- traverse (traverseWithCommonOptions t) packageConfigExecutable
@@ -553,7 +585,8 @@ traversePackageConfig t@Traverse{..} p@PackageConfig{..} = do
   tests <- traverseNamedConfigs t packageConfigTests
   benchmarks <- traverseNamedConfigs t packageConfigBenchmarks
   return p {
-      packageConfigLibrary = library
+      packageConfigForeignLibrary = foreignLibrary
+    , packageConfigLibrary = library
     , packageConfigInternalLibraries = internalLibraries
     , packageConfigExecutable = executable
     , packageConfigExecutables = executables
@@ -835,6 +868,7 @@ data Package = Package {
 , packageDataDir :: Maybe FilePath
 , packageSourceRepository :: Maybe SourceRepository
 , packageCustomSetup :: Maybe CustomSetup
+, packageForeignLibrary :: Maybe (Section ForeignLibrary)
 , packageLibrary :: Maybe (Section Library)
 , packageInternalLibraries :: Map String (Section Library)
 , packageExecutables :: Map String (Section Executable)
@@ -845,6 +879,15 @@ data Package = Package {
 
 data CustomSetup = CustomSetup {
   customSetupDependencies :: Dependencies
+} deriving (Eq, Show)
+
+data ForeignLibrary = ForeignLibrary {
+  foreignLibraryExposed :: Maybe Bool
+, foreignLibraryExposedModules :: [String]
+, foreignLibraryOtherModules :: [String]
+, foreignLibraryGeneratedModules :: [String]
+, foreignLibraryReexportedModules :: [String]
+, foreignLibrarySignatures :: [String]
 } deriving (Eq, Show)
 
 data Library = Library {
@@ -965,6 +1008,7 @@ expandSectionDefaults
   -> PackageConfigWithDefaults ParseCSources ParseCxxSources ParseJsSources
   -> Warnings (Errors IO) (PackageConfig ParseCSources ParseCxxSources ParseJsSources)
 expandSectionDefaults programName userDataDir dir p@PackageConfig{..} = do
+  foreignLibrary <- traverse (expandDefaults programName userDataDir dir) packageConfigForeignLibrary
   library <- traverse (expandDefaults programName userDataDir dir) packageConfigLibrary
   internalLibraries <- traverse (traverse (expandDefaults programName userDataDir dir)) packageConfigInternalLibraries
   executable <- traverse (expandDefaults programName userDataDir dir) packageConfigExecutable
@@ -972,7 +1016,8 @@ expandSectionDefaults programName userDataDir dir p@PackageConfig{..} = do
   tests <- traverse (traverse (expandDefaults programName userDataDir dir)) packageConfigTests
   benchmarks <- traverse (traverse (expandDefaults programName userDataDir dir)) packageConfigBenchmarks
   return p{
-      packageConfigLibrary = library
+      packageConfigForeignLibrary = foreignLibrary
+    , packageConfigLibrary = library
     , packageConfigInternalLibraries = internalLibraries
     , packageConfigExecutable = executable
     , packageConfigExecutables = executables
@@ -1040,9 +1085,11 @@ toPackage_ dir (Product g PackageConfig{..}) = do
     toSect :: (Monad m, Monoid a) => WithCommonOptions CSources CxxSources JsSources a -> Warnings m (Section a)
     toSect = toSection packageName_ executableNames . first ((mempty <$ globalOptions) <>)
 
+    toForeignLib = toSect >=> liftIO . toForeignLibrary dir packageName_
     toLib = toSect >=> liftIO . toLibrary dir packageName_
     toExecutables = maybe (return mempty) (traverse $ toSect >=> liftIO . toExecutable dir packageName_)
 
+  mForeignLibrary <- traverse toForeignLib packageConfigForeignLibrary
   mLibrary <- traverse toLib packageConfigLibrary
   internalLibraries <- maybe (return mempty) (traverse toLib) packageConfigInternalLibraries
 
@@ -1053,7 +1100,8 @@ toPackage_ dir (Product g PackageConfig{..}) = do
   licenseFileExists <- liftIO $ doesFileExist (dir </> "LICENSE")
 
   missingSourceDirs <- liftIO $ nub . sort <$> filterM (fmap not <$> doesDirectoryExist . (dir </>)) (
-       maybe [] sectionSourceDirs mLibrary
+       maybe [] sectionSourceDirs mForeignLibrary
+    ++ maybe [] sectionSourceDirs mLibrary
     ++ concatMap sectionSourceDirs internalLibraries
     ++ concatMap sectionSourceDirs executables
     ++ concatMap sectionSourceDirs tests
@@ -1109,6 +1157,7 @@ toPackage_ dir (Product g PackageConfig{..}) = do
       , packageDataDir = packageConfigDataDir
       , packageSourceRepository = sourceRepository
       , packageCustomSetup = mCustomSetup
+      , packageForeignLibrary = mForeignLibrary
       , packageLibrary = mLibrary
       , packageInternalLibraries = internalLibraries
       , packageExecutables = executables
@@ -1202,6 +1251,10 @@ traverseSectionAndConditionals fData fConditionals acc0 sect@Section{..} = do
   where
     traverseConditionals = traverse . traverse . traverseSectionAndConditionals fConditionals fConditionals
 
+getMentionedForeignLibraryModules :: ForeignLibrarySection -> [String]
+getMentionedForeignLibraryModules (ForeignLibrarySection _ exposedModules generatedExposedModules otherModules generatedOtherModules _ _)
+  = fromMaybeList (exposedModules <> generatedExposedModules <> otherModules <> generatedOtherModules)
+
 getMentionedLibraryModules :: LibrarySection -> [String]
 getMentionedLibraryModules (LibrarySection _ exposedModules generatedExposedModules otherModules generatedOtherModules _ _)
   = fromMaybeList (exposedModules <> generatedExposedModules <> otherModules <> generatedOtherModules)
@@ -1232,6 +1285,21 @@ inferModules dir packageName_ getMentionedModules getInferredModules fromData fr
         r = fromConfig pathsModule inferableModules conf
       return (outerModules ++ getInferredModules r, r)
 
+toForeignLibrary :: FilePath -> String -> Section ForeignLibrarySection -> IO (Section ForeignLibrary)
+toForeignLibrary dir name =
+    inferModules dir name getMentionedForeignLibraryModules getLibraryModules fromForeignLibrarySectionTopLevel fromForeignLibrarySectionInConditional
+  where
+    getLibraryModules :: ForeignLibrary -> [String]
+    getLibraryModules ForeignLibrary{..} = foreignLibraryExposedModules ++ foreignLibraryOtherModules
+
+    fromForeignLibrarySectionTopLevel pathsModule inferableModules ForeignLibrarySection{..} =
+      ForeignLibrary foreignLibrarySectionExposed exposedModules otherModules generatedModules reexportedModules signatures
+      where
+        (exposedModules, otherModules, generatedModules) =
+          determineModules pathsModule inferableModules foreignLibrarySectionExposedModules foreignLibrarySectionGeneratedExposedModules foreignLibrarySectionOtherModules foreignLibrarySectionGeneratedOtherModules
+        reexportedModules = fromMaybeList foreignLibrarySectionReexportedModules
+        signatures = fromMaybeList foreignLibrarySectionSignatures
+
 toLibrary :: FilePath -> String -> Section LibrarySection -> IO (Section Library)
 toLibrary dir name =
     inferModules dir name getMentionedLibraryModules getLibraryModules fromLibrarySectionTopLevel fromLibrarySectionInConditional
@@ -1255,6 +1323,14 @@ determineModules pathsModule inferable mExposed mGeneratedExposed mOther mGenera
     exposed = maybe inferable fromList mExposed ++ fromMaybeList mGeneratedExposed
     others = maybe ((inferable \\ exposed) ++ pathsModule) fromList mOther ++ fromMaybeList mGeneratedOther
 
+fromForeignLibrarySectionInConditional :: [String] -> ForeignLibrarySection -> ForeignLibrary
+fromForeignLibrarySectionInConditional inferableModules lib@(ForeignLibrarySection _ exposedModules _ otherModules _ _ _) =
+  case (exposedModules, otherModules) of
+    (Nothing, Nothing) -> addToOtherModules inferableModules (fromForeignLibrarySectionPlain lib)
+    _ -> fromForeignLibrarySectionPlain lib
+  where
+    addToOtherModules xs r = r {foreignLibraryOtherModules = xs ++ foreignLibraryOtherModules r}
+
 fromLibrarySectionInConditional :: [String] -> LibrarySection -> Library
 fromLibrarySectionInConditional inferableModules lib@(LibrarySection _ exposedModules _ otherModules _ _ _) =
   case (exposedModules, otherModules) of
@@ -1262,6 +1338,16 @@ fromLibrarySectionInConditional inferableModules lib@(LibrarySection _ exposedMo
     _ -> fromLibrarySectionPlain lib
   where
     addToOtherModules xs r = r {libraryOtherModules = xs ++ libraryOtherModules r}
+
+fromForeignLibrarySectionPlain :: ForeignLibrarySection -> ForeignLibrary
+fromForeignLibrarySectionPlain ForeignLibrarySection{..} = ForeignLibrary {
+    foreignLibraryExposed = foreignLibrarySectionExposed
+  , foreignLibraryExposedModules = fromMaybeList (foreignLibrarySectionExposedModules <> foreignLibrarySectionGeneratedExposedModules)
+  , foreignLibraryOtherModules = fromMaybeList (foreignLibrarySectionOtherModules <> foreignLibrarySectionGeneratedOtherModules)
+  , foreignLibraryGeneratedModules = fromMaybeList (foreignLibrarySectionGeneratedOtherModules <> foreignLibrarySectionGeneratedExposedModules)
+  , foreignLibraryReexportedModules = fromMaybeList foreignLibrarySectionReexportedModules
+  , foreignLibrarySignatures = fromMaybeList foreignLibrarySectionSignatures
+  }
 
 fromLibrarySectionPlain :: LibrarySection -> Library
 fromLibrarySectionPlain LibrarySection{..} = Library {

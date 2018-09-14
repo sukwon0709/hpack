@@ -25,6 +25,7 @@ module Hpack.Render (
 #ifdef TEST
 , renderConditional
 , renderDependencies
+, renderForeignLibraryFields
 , renderLibraryFields
 , renderExecutableFields
 , renderFlag
@@ -77,6 +78,9 @@ renderPackageWith settings headerFieldsAlignment existingFieldOrder sectionsFiel
     customSetup :: [Element]
     customSetup = maybe [] (return . renderCustomSetup) packageCustomSetup
 
+    foreignLibrary :: [Element]
+    foreignLibrary = maybe [] (return . renderForeignLibrary packageName) packageForeignLibrary
+
     library :: [Element]
     library = maybe [] (return . renderLibrary) packageLibrary
 
@@ -85,6 +89,7 @@ renderPackageWith settings headerFieldsAlignment existingFieldOrder sectionsFiel
         sourceRepository
       , customSetup
       , map renderFlag packageFlags
+      , foreignLibrary
       , library
       , renderInternalLibraries packageInternalLibraries
       , renderExecutables packageExecutables
@@ -199,6 +204,19 @@ renderCustomSetup :: CustomSetup -> Element
 renderCustomSetup CustomSetup{..} =
   Stanza "custom-setup" $ renderDependencies "setup-depends" customSetupDependencies
 
+renderForeignLibrary :: String -> Section ForeignLibrary -> Element
+renderForeignLibrary name sect = Stanza ("foreign-library " ++ name) $ renderForeignLibrarySection sect
+
+renderForeignLibrarySection :: Section ForeignLibrary -> [Element]
+renderForeignLibrarySection = renderSection renderForeignLibraryFields [] [defaultLanguage]
+
+renderForeignLibraryFields :: ForeignLibrary -> [Element]
+renderForeignLibraryFields ForeignLibrary{..} =
+  maybe [] (return . renderExposed) foreignLibraryExposed ++ [
+    renderForeignLibraryType "native-shared"
+  , renderOtherModules foreignLibraryOtherModules
+  ]
+
 renderLibrary :: Section Library -> Element
 renderLibrary sect = Stanza "library" $ renderLibrarySection sect
 
@@ -295,6 +313,9 @@ renderDirectories name = Field name . LineSeparatedList . replaceDots
     replaceDot xs = case xs of
       "." -> "./."
       _ -> xs
+
+renderForeignLibraryType :: String -> Element
+renderForeignLibraryType = Field "type" . Literal
 
 renderExposedModules :: [String] -> Element
 renderExposedModules = Field "exposed-modules" . LineSeparatedList
