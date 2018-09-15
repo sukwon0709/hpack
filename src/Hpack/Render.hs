@@ -216,7 +216,7 @@ renderForeignLibraryFields :: ForeignLibrary -> [Element]
 renderForeignLibraryFields ForeignLibrary{..} =
   maybe [] (return . renderExposed) foreignLibraryExposed ++ [
     renderForeignLibraryType "native-shared"
-  , renderOtherModules foreignLibraryOtherModules
+  , renderOtherModules foreignLibraryExposedModules
   ]
 
 renderLibrary :: Section Library -> Element
