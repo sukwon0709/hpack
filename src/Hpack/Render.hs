@@ -205,7 +205,9 @@ renderCustomSetup CustomSetup{..} =
   Stanza "custom-setup" $ renderDependencies "setup-depends" customSetupDependencies
 
 renderForeignLibrary :: String -> Section ForeignLibrary -> Element
-renderForeignLibrary name sect = Stanza ("foreign-library " ++ name) $ renderForeignLibrarySection sect
+renderForeignLibrary name sect = Stanza ("foreign-library " ++ map f name) $ renderForeignLibrarySection sect
+  where f '-' = '_'
+        f x = x
 
 renderForeignLibrarySection :: Section ForeignLibrary -> [Element]
 renderForeignLibrarySection = renderSection renderForeignLibraryFields [] [defaultLanguage]
