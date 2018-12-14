@@ -548,7 +548,7 @@ data PackageConfig_ foreignLibrary library executable = PackageConfig {
 , packageConfigCategory :: Maybe String
 , packageConfigStability :: Maybe String
 , packageConfigAuthor :: Maybe (List String)
-, packageConfigMaintainer :: Maybe (List String)
+, packageConfigMaintainer :: Maybe (Maybe (List String))
 , packageConfigCopyright :: Maybe (List String)
 , packageConfigBuildType :: Maybe BuildType
 , packageConfigLicense :: Maybe (Maybe String)
@@ -1144,7 +1144,7 @@ toPackage_ dir (Product g PackageConfig{..}) = do
       , packageCategory = packageConfigCategory
       , packageStability = packageConfigStability
       , packageAuthor = fromMaybeList packageConfigAuthor
-      , packageMaintainer = fromMaybeList packageConfigMaintainer
+      , packageMaintainer = fromMaybeList maintainer
       , packageCopyright = fromMaybeList packageConfigCopyright
       , packageBuildType = fromMaybe defaultBuildType packageConfigBuildType
       , packageLicense = join packageConfigLicense
@@ -1214,6 +1214,12 @@ toPackage_ dir (Product g PackageConfig{..}) = do
       _ -> join packageConfigBugReports <|> fromGithub
       where
         fromGithub = (++ "/issues") . sourceRepositoryUrl <$> github
+
+    maintainer :: Maybe (List String)
+    maintainer = case (packageConfigAuthor, packageConfigMaintainer) of
+      (Just _, Nothing) -> packageConfigAuthor
+      (_, Just m) -> m
+      _            -> Nothing
 
 expandForeignSources
   :: MonadIO m
